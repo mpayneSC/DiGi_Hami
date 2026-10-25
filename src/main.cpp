@@ -18,6 +18,7 @@ Adafruit_GC9A01A tft(TFT_CS, TFT_DC, TFT_RST);
 
 // Create GIF object
 AnimatedGIF gif;
+bool gifReady = false;
 
 // File handle for GIF
 File gifFile;
@@ -26,67 +27,31 @@ File gifFile;
 #define DISPLAY_WIDTH  240
 #define DISPLAY_HEIGHT 240
 
-// Buffer for pixel data (optional, for better performance)
-uint16_t lineBuffer[DISPLAY_WIDTH];
+// Compose a frame in RAM, then transfer it in one SPI transaction.
+// 115,200 bytes; fits the C3 without PSRAM.
+uint16_t frameBuffer[DISPLAY_WIDTH * DISPLAY_HEIGHT];
+bool frameDrawn = false;
 
-// GIF draw callback function
-void GIFDraw(GIFDRAW *pDraw) {
-  uint8_t *s;
-  uint16_t *d, *usPalette, usTemp[320];
-  int x, y, iWidth;
-
-  usPalette = pDraw->pPalette;
-  y = pDraw->iY + pDraw->y; // current line
-
-  s = pDraw->pPixels;
-  // Apply the new pixels to the main image
-  if (pDraw->ucHasTransparency) { // if transparency used
-    uint8_t *pEnd, c, ucTransparent = pDraw->ucTransparent;
-    int x, iCount;
-    pEnd = s + pDraw->iWidth;
-    x = 0;
-    iCount = 0; // count non-transparent pixels
-    while(x < pDraw->iWidth) {
-      c = ucTransparent-1;
-      d = usTemp;
-      while (c != ucTransparent && s < pEnd) {
-        c = *s++;
-        if (c == ucTransparent) { // done, stop
-          s--; // back up to treat it like transparent
-        } else { // opaque
-          *d++ = usPalette[c];
-          iCount++;
-        }
-      } // while looking for opaque pixels
-      if (iCount) { // any opaque pixels?
-        tft.startWrite();
-        tft.setAddrWindow(pDraw->iX + x, y, iCount, 1);
-        tft.writePixels(usTemp, iCount);
-        tft.endWrite();
-        x += iCount;
-        iCount = 0;
-      }
-      // no, look for a run of transparent pixels
-      c = ucTransparent;
-      while (c == ucTransparent && s < pEnd) {
-        c = *s++;
-        if (c == ucTransparent)
-          x++;
-        else
-          s--;
-      }
-    }
-  } else { // no transparency, just copy them all
-    s = pDraw->pPixels;
-    // Translate the 8-bit pixels through the RGB565 palette
-    for (x=0; x<pDraw->iWidth; x++)
-      usTemp[x] = usPalette[*s++];
-    tft.startWrite();
-    tft.setAddrWindow(pDraw->iX, y, pDraw->iWidth, 1);
-    tft.writePixels(usTemp, pDraw->iWidth);
-    tft.endWrite();
+void GIFDraw(GIFDRAW *draw) {
+  int y = draw->iY + draw->y;
+  int width = gif.getCanvasWidth(), height = gif.getCanvasHeight();
+  if (width <= 0 || height <= 0 || y < 0 || y >= height) return;
+  // Scale the prepared 160x160 canvas to the full round 240x240 screen.
+  int top = (y * DISPLAY_HEIGHT + height - 1) / height;
+  int bottom = ((y + 1) * DISPLAY_HEIGHT + height - 1) / height;
+  for (int x = 0; x < draw->iWidth; ++x) {
+    int screenX = draw->iX + x;
+    if (screenX < 0 || screenX >= width) continue;
+    uint8_t pixel = draw->pPixels[x];
+    if (draw->ucHasTransparency && pixel == draw->ucTransparent) continue;
+    int left = (screenX * DISPLAY_WIDTH + width - 1) / width;
+    int right = ((screenX + 1) * DISPLAY_WIDTH + width - 1) / width;
+    for (int row = top; row < bottom; ++row)
+      for (int col = left; col < right; ++col)
+        frameBuffer[row * DISPLAY_WIDTH + col] = draw->pPalette[pixel];
   }
-} // GIFDraw()
+  frameDrawn = true;
+}
 
 // Function to open GIF file
 void * GIFOpenFile(const char *fname, int32_t *pSize) {
@@ -130,6 +95,8 @@ int32_t GIFSeekFile(GIFFILE *pFile, int32_t iPosition) {
   return pFile->iPos;
 }
 
+#include "pet.h"
+
 void setup() {
   Serial.begin(115200);
   // Note: on the C3 Super Mini, make sure "USB CDC On Boot" is set to
@@ -141,14 +108,15 @@ void setup() {
   SPI.begin(TFT_SCLK, -1 /* MISO not used */, TFT_MOSI, TFT_CS);
 
   // Initialize SPIFFS
-  if (!SPIFFS.begin(true)) {
+  bool mounted = SPIFFS.begin(false);
+  if (!mounted) {
     Serial.println("SPIFFS initialization failed!");
-    return;
+  } else {
+    Serial.println("SPIFFS initialized successfully!");
   }
-  Serial.println("SPIFFS initialized successfully!");
 
   // Initialize the display
-  tft.begin();
+  tft.begin(40000000); // Explicit 40 MHz display SPI clock
   tft.setRotation(0);
   tft.fillScreen(0x0000); // Black background
 
@@ -156,8 +124,16 @@ void setup() {
 
   // Initialize GIF decoder
   gif.begin(LITTLE_ENDIAN_PIXELS);
+
+  petSetup(mounted);
 }
 
+void loop() {
+  petLoop();
+}
+
+// Previous playback loop retained for review.
+/*
 void loop() {
   // Open the GIF file (replace with your GIF filename)
   // The GIF should be uploaded to SPIFFS with the name "animation.gif"
@@ -186,3 +162,4 @@ void loop() {
     delay(5000); // Wait 5 seconds before retrying
   }
 }
+*/
