@@ -10,3 +10,7 @@
 
 # Local working notes/scratch — never goes to GitHub
 .project/
+
+# Local animation tooling and Python bytecode
+.tools/pillow314/
+__pycache__/

@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "device_data"
 SOURCES = {
     "idle.gif": "idle.gif",
+    "drinking.gif": "drinking.gif",
     "eating.gif": "eating.gif",
     "exercising.gif": "exercising.gif",
     "sleeping.gif": "sleeping.gif",
